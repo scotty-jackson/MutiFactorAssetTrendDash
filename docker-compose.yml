@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for time series data
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: factor-dashboard-db
+    environment:
+      POSTGRES_DB: factor_dashboard
+      POSTGRES_USER: dashboard_user
+      POSTGRES_PASSWORD: change_me_in_production
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard_user -d factor_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dashboard-network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: factor-dashboard-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dashboard-network
+
+  # Backend API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: factor-dashboard-api
+    environment:
+      - DATABASE_URL=postgresql://dashboard_user:change_me_in_production@postgres:5432/factor_dashboard
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - dashboard-network
+    restart: unless-stopped
+
+  # Batch computation worker (runs periodically)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: factor-dashboard-worker
+    command: python scripts/compute_batch.py
+    environment:
+      - DATABASE_URL=postgresql://dashboard_user:change_me_in_production@postgres:5432/factor_dashboard
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dashboard-network
+    deploy:
+      restart_policy:
+        condition: none  # Run once
+
+  # Nginx reverse proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    container_name: factor-dashboard-nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    networks:
+      - dashboard-network
+    restart: unless-stopped
+    profiles:
+      - production  # Only start with --profile production
+
+networks:
+  dashboard-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

@@ -15,11 +15,18 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import DEFAULT_CONFIG
+from utils import get_logger
+
+# Import API routers
+from backend.api import signals, regimes
+
+# Setup logging
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="Multi Asset Factor Trend Dashboard API",
-    description="API for serving multi-asset and factor trend analysis",
-    version="0.1.0"
+    description="API for serving multi-asset and factor trend analysis with advanced analytics",
+    version="0.2.0"
 )
 
 # Add CORS middleware
@@ -30,6 +37,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(signals.router)
+app.include_router(regimes.router)
 
 # Data cache directory
 CACHE_DIR = Path(DEFAULT_CONFIG.data.cache_dir)
@@ -48,6 +59,14 @@ def root():
             "/api/factor-trends/current": "Current factor trend states",
             "/api/factor-trends/history": "Historical trends for a factor",
             "/api/factor-breadth/current": "Current factor breadth metrics",
+            "/api/signals/breadth": "Breadth-based trading signals",
+            "/api/signals/momentum": "Momentum-based signals",
+            "/api/signals/factors": "Factor tilt signals",
+            "/api/signals/all": "All signals",
+            "/api/regimes/current": "Current market regimes",
+            "/api/regimes/trend": "Trend regime analysis",
+            "/api/regimes/volatility": "Volatility regime analysis",
+            "/api/regimes/risk": "Risk-on/risk-off regime",
             "/api/valuation-spreads/current": "Current valuation spreads",
         }
     }
